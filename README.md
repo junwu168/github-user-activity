@@ -2,6 +2,8 @@
 
 A lightweight command-line tool that fetches and displays a user's recent GitHub activity.
 
+**Project:** https://roadmap.sh/projects/github-user-activity
+
 ## Why I Built This
 
 I needed a quick way to check what someone was working on without opening GitHub in a browser. A simple CLI that shows recent pushes, PRs, issues, and stars — right in the terminal.
