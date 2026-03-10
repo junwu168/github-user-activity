@@ -495,6 +495,91 @@ func TestFetchEventsEmptyUsername(t *testing.T) {
 	}
 }
 
+// Test invalid username format to prevent URL injection
+func TestFetchEventsInvalidUsernameFormat(t *testing.T) {
+	invalidUsernames := []string{
+		"test?url=http://evil.com",
+		"test#fragment",
+		"test/",
+		"test\\",
+		"test space",
+		"test\nnewline",
+		"<script>alert(1)</script>",
+		"../../../etc/passwd",
+	}
+
+	for _, username := range invalidUsernames {
+		_, err := fetchEvents(username)
+		if err == nil {
+			t.Errorf("Expected error for invalid username: %q", username)
+		}
+		if err != nil && !strings.Contains(err.Error(), "invalid") && !strings.Contains(err.Error(), "format") {
+			t.Errorf("Expected 'invalid' or 'format' in error for %q, got: %v", username, err)
+		}
+	}
+}
+
+// Test valid username formats
+func TestFetchEventsValidUsername(t *testing.T) {
+	validUsernames := []string{
+		"kamranahmedse",
+		"test-user",
+		"test_user",
+		"TestUser123",
+		"a",
+		"testuser123",
+	}
+
+	for _, username := range validUsernames {
+		// These should not return an "invalid format" error
+		// They may fail due to network, but should not fail with "invalid format"
+		_, err := fetchEvents(username)
+		if err != nil && (strings.Contains(err.Error(), "invalid") && strings.Contains(err.Error(), "format")) {
+			t.Errorf("Valid username %q should not fail with format error: %v", username, err)
+		}
+	}
+}
+
+// Test isValidUsername directly for edge cases
+func TestIsValidUsername(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		valid    bool
+	}{
+		// Valid usernames
+		{"single char", "a", true},
+		{"single digit", "1", true},
+		{"lowercase", "testuser", true},
+		{"uppercase", "TestUser", true},
+		{"with hyphen", "test-user", true},
+		{"with underscore", "test_user", true},
+		{"mixed", "Test-User_123", true},
+		{"max length 39 chars", strings.Repeat("a", 39), true},
+		// Invalid usernames
+		{"empty string", "", false},
+		{"too long 40 chars", strings.Repeat("a", 40), false},
+		{"too long 100 chars", strings.Repeat("a", 100), false},
+		{"starts with hyphen", "-testuser", false},
+		{"ends with hyphen", "testuser-", false},
+		{"starts with underscore", "_testuser", false},
+		{"contains space", "test user", false},
+		{"contains slash", "test/user", false},
+		{"contains backslash", "test\\user", false},
+		{"contains dot", "test.user", false},
+		{"contains at", "test@user", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isValidUsername(tt.username)
+			if result != tt.valid {
+				t.Errorf("isValidUsername(%q) = %v, want %v", tt.username, result, tt.valid)
+			}
+		})
+	}
+}
+
 // Test formatEvent with different issue actions
 func TestFormatEventIssuesClosed(t *testing.T) {
 	event := GitHubEvent{

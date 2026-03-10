@@ -5,10 +5,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// GitHub username validation regex
+// Usernames: 1-39 chars, alphanumeric, hyphens, underscores, cannot start with -
+var validUsernameRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$|^[a-zA-Z0-9]$`)
 
 // GitHub API types
 type GitHubEvent struct {
@@ -95,7 +101,13 @@ func fetchEvents(username string) ([]GitHubEvent, error) {
 		return nil, fmt.Errorf("username cannot be empty")
 	}
 
-	url := fmt.Sprintf("https://api.github.com/users/%s/events", username)
+	// Validate username format to prevent URL injection
+	// GitHub usernames: alphanumeric, hyphens, underscores, max 39 chars
+	if !isValidUsername(username) {
+		return nil, fmt.Errorf("invalid username format: %s", username)
+	}
+
+	url := fmt.Sprintf("https://api.github.com/users/%s/events", url.PathEscape(username))
 
 	resp, err := defaultClient.Get(url)
 	if err != nil {
@@ -202,4 +214,13 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// isValidUsername validates GitHub username format
+// GitHub usernames: alphanumeric, hyphens, underscores, 1-39 chars, cannot start with -
+func isValidUsername(username string) bool {
+	if username == "" || len(username) > 39 {
+		return false
+	}
+	return validUsernameRegex.MatchString(username)
 }
