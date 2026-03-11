@@ -175,55 +175,6 @@ func fetchEvents(username string) ([]GitHubEvent, error) {
 	return events, nil
 }
 
-// fetchEventsWithPerPage fetches GitHub events with pagination support
-func fetchEventsWithPerPage(username string, perPage int) ([]GitHubEvent, error) {
-	if username == "" {
-		return nil, fmt.Errorf("username cannot be empty")
-	}
-
-	// Validate username format to prevent URL injection
-	if !isValidUsername(username) {
-		return nil, fmt.Errorf("invalid username format: %s", username)
-	}
-
-	// Validate per_page parameter
-	if err := validatePerPage(perPage); err != nil {
-		return nil, err
-	}
-
-	// Use default if perPage is 0
-	if perPage == 0 {
-		perPage = 30
-	}
-
-	url := fmt.Sprintf("https://api.github.com/users/%s/events?per_page=%d", url.PathEscape(username), perPage)
-
-	resp, err := defaultClient.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch events: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("user %s not found", username)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %v", err)
-	}
-
-	var events []GitHubEvent
-	if err := json.Unmarshal(body, &events); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %v", err)
-	}
-
-	return events, nil
-}
 
 // validatePerPage validates the per_page parameter is within valid range
 func validatePerPage(perPage int) error {
