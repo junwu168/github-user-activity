@@ -78,12 +78,33 @@ go build -o github-activity .
 ./github-activity torvalds
 ```
 
+## Options
+
+```bash
+# Specify number of events (1-100, default 30)
+./github-activity torvalds --count 50
+./github-activity torvalds -n 25
+```
+
+## Authentication (Optional)
+
+GitHub limits unauthenticated requests to 60/hour. To increase the limit to 5,000/hour:
+
+1. Generate a Personal Access Token at https://github.com/settings/tokens
+2. Set the environment variable:
+
+```bash
+export GITHUB_TOKEN=your_token_here
+./github-activity torvalds
+```
+
+If you hit the rate limit without a token, you'll see a helpful message explaining how to set one up.
+
 ## What's Next
 
 Potential improvements:
 - Filter by event type
 - Structured JSON output
 - Cache results
-- Support pagination
 
-The code is ~220 lines. Clean, focused, and done.
+The code is ~270 lines. Clean, focused, and done.
