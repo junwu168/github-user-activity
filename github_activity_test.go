@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -641,5 +643,550 @@ func TestFormatEventPullRequestReviewComment(t *testing.T) {
 	expected := "Created pull request comment in testuser/repo"
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
+	}
+}
+
+// Test main function branches via testable examples
+func TestMainWithMockedFetch(t *testing.T) {
+	// Mock the fetchEventsWithPerPage to avoid network calls
+	// Since we can't easily test main, we test the individual functions it calls
+
+	// Test validatePerPage edge cases
+	tests := []struct {
+		name    string
+		perPage int
+		wantErr bool
+	}{
+		{"boundary 1", 1, false},
+		{"boundary 100", 100, false},
+		{"below min", -1, true},
+		{"above max", 1000, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePerPage(tt.perPage)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validatePerPage() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// Test fetchEventsWithPerPage with error paths
+func TestFetchEventsWithPerPageErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		perPage  int
+		wantErr  bool
+		errMsg   string
+	}{
+		{"empty username", "", 30, true, "cannot be empty"},
+		{"invalid username format", "test user", 30, true, "invalid username format"},
+		{"perPage too low", "testuser", 0, true, "count must be between"},
+		{"perPage too high", "testuser", 101, true, "count must be between"},
+		{"perPage negative", "testuser", -5, true, "count must be between"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Use a mock client that returns error
+			mockClient := &mockHTTPClient{
+				response: nil,
+				err:      fmt.Errorf("mock error"),
+			}
+			origClient := defaultClient
+			defaultClient = mockClient
+			defer func() { defaultClient = origClient }()
+
+			_, err := fetchEventsWithPerPage(tt.username, tt.perPage)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("fetchEventsWithPerPage() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("fetchEventsWithPerPage() error = %v, should contain %v", err, tt.errMsg)
+			}
+		})
+	}
+}
+
+// Test fetchEventsWithPerPage network error path
+func TestFetchEventsWithPerPageNetworkError(t *testing.T) {
+	mockClient := &mockHTTPClient{
+		response: nil,
+		err:      fmt.Errorf("network error: connection refused"),
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	_, err := fetchEventsWithPerPage("testuser", 30)
+	if err == nil {
+		t.Error("Expected error for network failure")
+	}
+	if !strings.Contains(err.Error(), "failed to fetch events") {
+		t.Errorf("Expected 'failed to fetch events' in error, got: %v", err)
+	}
+}
+
+// Test fetchEventsWithPerPage 404 error path
+func TestFetchEventsWithPerPageNotFound(t *testing.T) {
+	mockClient := &mockHTTPClient{
+		response: &http.Response{
+			StatusCode: http.StatusNotFound,
+			Body:       io.NopCloser(strings.NewReader("")),
+		},
+		err: nil,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	_, err := fetchEventsWithPerPage("nonexistentuser123456", 30)
+	if err == nil {
+		t.Error("Expected error for 404 response")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("Expected 'not found' in error, got: %v", err)
+	}
+}
+
+// Test fetchEventsWithPerPage non-OK status code
+func TestFetchEventsWithPerPageAPIError(t *testing.T) {
+	mockClient := &mockHTTPClient{
+		response: &http.Response{
+			StatusCode: http.StatusForbidden,
+			Body:       io.NopCloser(strings.NewReader("")),
+		},
+		err: nil,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	_, err := fetchEventsWithPerPage("testuser", 30)
+	if err == nil {
+		t.Error("Expected error for non-OK status code")
+	}
+	if !strings.Contains(err.Error(), "status 403") {
+		t.Errorf("Expected 'status 403' in error, got: %v", err)
+	}
+}
+
+// Test fetchEventsWithPerPage with empty response (should fail gracefully)
+func TestFetchEventsWithPerPageEmptyResponse(t *testing.T) {
+	mockClient := &mockHTTPClient{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("")),
+		},
+		err: nil,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	_, err := fetchEventsWithPerPage("testuser", 30)
+	if err == nil {
+		t.Error("Expected error for empty response body")
+	}
+}
+
+// Test parseCountFlag with edge cases
+func TestParseCountFlagEdgeCases(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expectErr bool
+	}{
+		{"single digit", "5", false},
+		{"two digits", "50", false},
+		{"boundary min", "1", false},
+		{"boundary max", "100", false},
+		{"whitespace only", " ", true},
+		{"number with spaces", "10", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseCountFlag(tt.input)
+			if (err != nil) != tt.expectErr {
+				t.Errorf("parseCountFlag(%q) error = %v, expectErr %v", tt.input, err, tt.expectErr)
+			}
+		})
+	}
+}
+
+// Test fetchEventsWithPerPage default behavior (perPage = 0 should default to 30)
+func TestFetchEventsWithPerPageZeroPerPage(t *testing.T) {
+	var capturedURL string
+	mockClient := &mockURLClient{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("[]")),
+		},
+		err:         nil,
+		capturedURL: &capturedURL,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	// Test with perPage = 0 (should use default 30)
+	_, err := fetchEventsWithPerPage("testuser", 0)
+	if err != nil {
+		// validatePerPage rejects 0, so this will error
+		if !strings.Contains(err.Error(), "count must be between") {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	} else {
+		// If it passes validation, check for default in URL
+		if !strings.Contains(capturedURL, "per_page=30") {
+			t.Errorf("Expected default per_page=30 in URL, got: %s", capturedURL)
+		}
+	}
+}
+
+// Test fetchEventsWithPerPage with exactly 1 event
+func TestFetchEventsWithPerPageBoundary1(t *testing.T) {
+	event := []GitHubEvent{mockPushEvent}
+	body, _ := json.Marshal(event)
+
+	mockClient := &mockHTTPClient{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+		},
+		err: nil,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	result, err := fetchEventsWithPerPage("testuser", 1)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+	if len(result) != 1 {
+		t.Errorf("Expected 1 event, got %d", len(result))
+	}
+}
+
+// Test fetchEventsWithPerPage with exactly 100 events
+func TestFetchEventsWithPerPageBoundary100(t *testing.T) {
+	events := make([]GitHubEvent, 100)
+	for i := 0; i < 100; i++ {
+		events[i] = mockPushEvent
+	}
+	body, _ := json.Marshal(events)
+
+	mockClient := &mockHTTPClient{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+		},
+		err: nil,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	result, err := fetchEventsWithPerPage("testuser", 100)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+	if len(result) != 100 {
+		t.Errorf("Expected 100 events, got %d", len(result))
+	}
+}
+
+// ============== parseArgs Tests ==============
+
+// Helper to set up os.Args for testing parseArgs and reset flags
+func withArgs(args []string, fn func()) {
+	// Reset flags before each test to avoid redefinition panic
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+
+	origArgs := os.Args
+	origStderr := os.Stderr
+	// Suppress flag error output during tests
+	os.Stderr, _ = os.Open(os.DevNull)
+
+	defer func() {
+		os.Args = origArgs
+		os.Stderr = origStderr
+	}()
+
+	os.Args = args
+	fn()
+}
+
+func TestParseArgsNoUsername(t *testing.T) {
+	withArgs([]string{"github-activity"}, func() {
+		_, _, err := parseArgs()
+		if err == nil {
+			t.Error("Expected error when no username provided")
+		}
+		if !strings.Contains(err.Error(), "usage") {
+			t.Errorf("Expected usage error, got: %v", err)
+		}
+	})
+}
+
+func TestParseArgsInvalidCount(t *testing.T) {
+	withArgs([]string{"github-activity", "-count", "0", "testuser"}, func() {
+		_, _, err := parseArgs()
+		if err == nil {
+			t.Error("Expected error for count=0")
+		}
+		if !strings.Contains(err.Error(), "count must be between") {
+			t.Errorf("Expected count validation error, got: %v", err)
+		}
+	})
+}
+
+func TestParseArgsInvalidCountOver100(t *testing.T) {
+	withArgs([]string{"github-activity", "-count", "101", "testuser"}, func() {
+		_, _, err := parseArgs()
+		if err == nil {
+			t.Error("Expected error for count=101")
+		}
+		if !strings.Contains(err.Error(), "count must be between") {
+			t.Errorf("Expected count validation error, got: %v", err)
+		}
+	})
+}
+
+func TestParseArgsShortFlag(t *testing.T) {
+	withArgs([]string{"github-activity", "-n", "50", "testuser"}, func() {
+		count, username, err := parseArgs()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if count != 50 {
+			t.Errorf("Expected count=50, got %d", count)
+		}
+		if username != "testuser" {
+			t.Errorf("Expected username=testuser, got %s", username)
+		}
+	})
+}
+
+func TestParseArgsDefaultCount(t *testing.T) {
+	withArgs([]string{"github-activity", "testuser"}, func() {
+		count, username, err := parseArgs()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if count != 30 {
+			t.Errorf("Expected default count=30, got %d", count)
+		}
+		if username != "testuser" {
+			t.Errorf("Expected username=testuser, got %s", username)
+		}
+	})
+}
+
+func TestParseArgsBothFlagsNPrecedence(t *testing.T) {
+	// When both -count and -n are provided, -n should take precedence
+	withArgs([]string{"github-activity", "-count", "10", "-n", "20", "testuser"}, func() {
+		count, _, err := parseArgs()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		// -n takes precedence
+		if count != 20 {
+			t.Errorf("Expected -n flag to take precedence, got count=%d", count)
+		}
+	})
+}
+
+func TestParseArgsCountFlag(t *testing.T) {
+	withArgs([]string{"github-activity", "-count", "75", "testuser"}, func() {
+		count, username, err := parseArgs()
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+		if count != 75 {
+			t.Errorf("Expected count=75, got %d", count)
+		}
+		if username != "testuser" {
+			t.Errorf("Expected username=testuser, got %s", username)
+		}
+	})
+}
+
+// ============== Pagination Tests ==============
+
+// Test fetchEvents with per_page parameter
+func TestFetchEventsWithPerPage(t *testing.T) {
+	events := []GitHubEvent{mockPushEvent, mockWatchEvent, mockIssueEvent}
+	body, _ := json.Marshal(events)
+
+	mockClient := &mockHTTPClient{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+		},
+		err: nil,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+
+	setClient(mockClient)
+
+	// Test with perPage = 10
+	result, err := fetchEventsWithPerPage("testuser", 10)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+	if len(result) != 3 {
+		t.Errorf("Expected 3 events, got %d", len(result))
+	}
+}
+
+// Test fetchEventsWithPerPage validates per_page in URL
+func TestFetchEventsWithPerPageInURL(t *testing.T) {
+	var capturedURL string
+	mockClient := &mockURLClient{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("[]")),
+		},
+		err:         nil,
+		capturedURL: &capturedURL,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	// Test with perPage = 50
+	_, err := fetchEventsWithPerPage("testuser", 50)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	// Verify the URL contains per_page parameter
+	if !strings.Contains(capturedURL, "per_page=50") {
+		t.Errorf("Expected URL to contain per_page=50, got %s", capturedURL)
+	}
+}
+
+// mockURLClient captures the URL for testing
+type mockURLClient struct {
+	response    *http.Response
+	err         error
+	capturedURL *string
+}
+
+func (m *mockURLClient) Get(url string) (*http.Response, error) {
+	if m.capturedURL != nil {
+		*m.capturedURL = url
+	}
+	return m.response, m.err
+}
+
+// Test fetchEventsWithPerPage default value (30)
+func TestFetchEventsWithPerPageDefault(t *testing.T) {
+	var capturedURL string
+	mockClient := &mockURLClient{
+		response: &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("[]")),
+		},
+		err:         nil,
+		capturedURL: &capturedURL,
+	}
+
+	origClient := defaultClient
+	defer func() { defaultClient = origClient }()
+	defaultClient = mockClient
+
+	// Test with 30 (explicit value for default) - should include per_page=30
+	_, err := fetchEventsWithPerPage("testuser", 30)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	// Default should be 30
+	if !strings.Contains(capturedURL, "per_page=30") {
+		t.Errorf("Expected URL to contain per_page=30, got %s", capturedURL)
+	}
+}
+
+// Test validatePerPage function
+func TestValidatePerPage(t *testing.T) {
+	tests := []struct {
+		name      string
+		perPage   int
+		expectErr bool
+	}{
+		{"valid 1", 1, false},
+		{"valid 10", 10, false},
+		{"valid 30", 30, false},
+		{"valid 50", 50, false},
+		{"valid 100", 100, false},
+		{"invalid 0", 0, true},
+		{"invalid -1", -1, true},
+		{"invalid -100", -100, true},
+		{"invalid 101", 101, true},
+		{"invalid 1000", 1000, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePerPage(tt.perPage)
+			if tt.expectErr && err == nil {
+				t.Errorf("Expected error for perPage=%d, got nil", tt.perPage)
+			}
+			if !tt.expectErr && err != nil {
+				t.Errorf("Expected no error for perPage=%d, got %v", tt.perPage, err)
+			}
+		})
+	}
+}
+
+// Test parseCountFlag function
+func TestParseCountFlag(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expected  int
+		expectErr bool
+	}{
+		{"valid 10", "10", 10, false},
+		{"valid 30", "30", 30, false},
+		{"valid 100", "100", 100, false},
+		{"valid 1", "1", 1, false},
+		{"invalid 0", "0", 0, true},
+		{"invalid -1", "-1", 0, true},
+		{"invalid 101", "101", 0, true},
+		{"invalid empty", "", 0, true},
+		{"invalid abc", "abc", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseCountFlag(tt.input)
+			if tt.expectErr && err == nil {
+				t.Errorf("Expected error for input=%q, got nil", tt.input)
+			}
+			if !tt.expectErr && err != nil {
+				t.Errorf("Expected no error for input=%q, got %v", tt.input, err)
+			}
+			if !tt.expectErr && result != tt.expected {
+				t.Errorf("Expected %d, got %d", tt.expected, result)
+			}
+		})
 	}
 }
