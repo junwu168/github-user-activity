@@ -908,7 +908,397 @@ func TestFetchEventsWithPerPageBoundary100(t *testing.T) {
 	}
 }
 
-// ============== parseArgs Tests ==============
+// ============== Filter by Event Type Tests ==============
+
+// Test validEventTypes constant
+func TestValidEventTypes(t *testing.T) {
+	expectedTypes := []string{
+		"PushEvent", "IssuesEvent", "WatchEvent", "CreateEvent", "DeleteEvent",
+		"ForkEvent", "PullRequestEvent", "IssueCommentEvent", "CommitCommentEvent",
+		"PullRequestReviewEvent", "ReleaseEvent", "PullRequestReviewCommentEvent",
+	}
+
+	if len(validEventTypes) != len(expectedTypes) {
+		t.Errorf("Expected %d event types, got %d", len(expectedTypes), len(validEventTypes))
+	}
+
+	for _, expected := range expectedTypes {
+		found := false
+		for _, actual := range validEventTypes {
+			if expected == actual {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected event type %q not found in validEventTypes", expected)
+		}
+	}
+}
+
+// Test isValidEventType function
+func TestIsValidEventType(t *testing.T) {
+	tests := []struct {
+		name     string
+		eventType string
+		expected bool
+	}{
+		{"valid PushEvent", "PushEvent", true},
+		{"valid IssuesEvent", "IssuesEvent", true},
+		{"valid WatchEvent", "WatchEvent", true},
+		{"valid CreateEvent", "CreateEvent", true},
+		{"valid DeleteEvent", "DeleteEvent", true},
+		{"valid ForkEvent", "ForkEvent", true},
+		{"valid PullRequestEvent", "PullRequestEvent", true},
+		{"valid IssueCommentEvent", "IssueCommentEvent", true},
+		{"valid CommitCommentEvent", "CommitCommentEvent", true},
+		{"valid PullRequestReviewEvent", "PullRequestReviewEvent", true},
+		{"valid ReleaseEvent", "ReleaseEvent", true},
+		{"valid PullRequestReviewCommentEvent", "PullRequestReviewCommentEvent", true},
+		{"invalid pushevent lowercase", "pushevent", false},
+		{"invalid PushEvent capitalized", "PushEvent", true},
+		{"invalid unknown type", "UnknownEvent", false},
+		{"invalid empty string", "", false},
+		{"invalid random string", "RandomEvent", false},
+		{"invalid GollumEvent", "GollumEvent", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isValidEventType(tt.eventType)
+			if result != tt.expected {
+				t.Errorf("isValidEventType(%q) = %v, want %v", tt.eventType, result, tt.expected)
+			}
+		})
+	}
+}
+
+// Test parseFilter function
+func TestParseFilter(t *testing.T) {
+	tests := []struct {
+		name           string
+		filterStr      string
+		expectedMap    map[string]bool
+		expectErr      bool
+		expectedErrMsg string
+	}{
+		{
+			name:        "single valid event type",
+			filterStr:   "PushEvent",
+			expectedMap: map[string]bool{"PushEvent": true},
+			expectErr:   false,
+		},
+		{
+			name:        "multiple valid event types",
+			filterStr:   "PushEvent,WatchEvent",
+			expectedMap: map[string]bool{"PushEvent": true, "WatchEvent": true},
+			expectErr:   false,
+		},
+		{
+			name:        "multiple event types with spaces",
+			filterStr:   "PushEvent, WatchEvent, IssuesEvent",
+			expectedMap: map[string]bool{"PushEvent": true, "WatchEvent": true, "IssuesEvent": true},
+			expectErr:   false,
+		},
+		{
+			name:        "empty string returns empty map",
+			filterStr:   "",
+			expectedMap: map[string]bool{},
+			expectErr:   false,
+		},
+		{
+			name:           "invalid event type",
+			filterStr:      "InvalidEvent",
+			expectedMap:    nil,
+			expectErr:      true,
+			expectedErrMsg: "invalid event type",
+		},
+		{
+			name:           "mixed valid and invalid",
+			filterStr:      "PushEvent,InvalidEvent",
+			expectedMap:    nil,
+			expectErr:      true,
+			expectedErrMsg: "invalid event type",
+		},
+		{
+			name:        "single event type no comma",
+			filterStr:   "PullRequestEvent",
+			expectedMap: map[string]bool{"PullRequestEvent": true},
+			expectErr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseFilter(tt.filterStr)
+
+			if tt.expectErr {
+				if err == nil {
+					t.Errorf("Expected error, got nil")
+				}
+				if tt.expectedErrMsg != "" && !strings.Contains(err.Error(), tt.expectedErrMsg) {
+					t.Errorf("Expected error containing %q, got %v", tt.expectedErrMsg, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			// Verify map contents
+			if len(result) != len(tt.expectedMap) {
+				t.Errorf("Expected map size %d, got %d", len(tt.expectedMap), len(result))
+				return
+			}
+
+			for key := range tt.expectedMap {
+				if !result[key] {
+					t.Errorf("Expected key %q in result map", key)
+				}
+			}
+		})
+	}
+}
+
+// Test filterEvents function - filtering is immutable
+func TestFilterEvents(t *testing.T) {
+	events := []GitHubEvent{
+		{Type: "PushEvent", Repo: Repo{Name: "user/repo1"}},
+		{Type: "WatchEvent", Repo: Repo{Name: "user/repo2"}},
+		{Type: "PushEvent", Repo: Repo{Name: "user/repo3"}},
+		{Type: "IssuesEvent", Repo: Repo{Name: "user/repo4"}},
+		{Type: "WatchEvent", Repo: Repo{Name: "user/repo5"}},
+	}
+
+	tests := []struct {
+		name          string
+		filterMap     map[string]bool
+		expectedCount int
+		expectedTypes []string
+	}{
+		{
+			name:          "filter by PushEvent only",
+			filterMap:     map[string]bool{"PushEvent": true},
+			expectedCount: 2,
+			expectedTypes: []string{"PushEvent", "PushEvent"},
+		},
+		{
+			name:          "filter by WatchEvent only",
+			filterMap:     map[string]bool{"WatchEvent": true},
+			expectedCount: 2,
+			expectedTypes: []string{"WatchEvent", "WatchEvent"},
+		},
+		{
+			name:          "filter by multiple types",
+			filterMap:     map[string]bool{"PushEvent": true, "WatchEvent": true},
+			expectedCount: 4,
+			expectedTypes: []string{"PushEvent", "WatchEvent", "PushEvent", "WatchEvent"},
+		},
+		{
+			name:          "empty filter returns all",
+			filterMap:     map[string]bool{},
+			expectedCount: 5,
+			expectedTypes: []string{"PushEvent", "WatchEvent", "PushEvent", "IssuesEvent", "WatchEvent"},
+		},
+		{
+			name:          "filter by IssuesEvent",
+			filterMap:     map[string]bool{"IssuesEvent": true},
+			expectedCount: 1,
+			expectedTypes: []string{"IssuesEvent"},
+		},
+		{
+			name:          "filter excludes all",
+			filterMap:     map[string]bool{"NonExistentEvent": true},
+			expectedCount: 0,
+			expectedTypes: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := filterEvents(events, tt.filterMap)
+
+			if len(result) != tt.expectedCount {
+				t.Errorf("Expected %d events, got %d", tt.expectedCount, len(result))
+				return
+			}
+
+			// Verify original slice is not modified (immutability)
+			if len(events) != 5 {
+				t.Errorf("Original events slice was modified")
+			}
+
+			// Verify types match expected
+			for i, expectedType := range tt.expectedTypes {
+				if result[i].Type != expectedType {
+					t.Errorf("At index %d: expected type %q, got %q", i, expectedType, result[i].Type)
+				}
+			}
+		})
+	}
+}
+
+// Test filterEvents with nil filter (should return all events)
+func TestFilterEventsNilFilter(t *testing.T) {
+	events := []GitHubEvent{
+		{Type: "PushEvent", Repo: Repo{Name: "user/repo1"}},
+		{Type: "WatchEvent", Repo: Repo{Name: "user/repo2"}},
+	}
+
+	result := filterEvents(events, nil)
+
+	if len(result) != 2 {
+		t.Errorf("Expected 2 events with nil filter, got %d", len(result))
+	}
+}
+
+// Test filterEvents with empty events slice
+func TestFilterEventsEmptySlice(t *testing.T) {
+	events := []GitHubEvent{}
+	filterMap := map[string]bool{"PushEvent": true}
+
+	result := filterEvents(events, filterMap)
+
+	if len(result) != 0 {
+		t.Errorf("Expected 0 events, got %d", len(result))
+	}
+}
+
+// Test that filterEvents creates a new slice (immutability)
+func TestFilterEventsReturnsNewSlice(t *testing.T) {
+	events := []GitHubEvent{
+		{Type: "PushEvent", Repo: Repo{Name: "user/repo1"}},
+	}
+	filterMap := map[string]bool{"PushEvent": true}
+
+	result := filterEvents(events, filterMap)
+
+	// Modify the result to verify it's a new slice
+	if len(result) > 0 {
+		result[0].Type = "ModifiedEvent"
+	}
+
+	// Original should be unchanged
+	if events[0].Type != "PushEvent" {
+		t.Error("Original slice was modified - immutability violated")
+	}
+}
+
+// Test parseArgs with filter flag
+func TestParseArgsWithFilter(t *testing.T) {
+	tests := []struct {
+		name            string
+		args            []string
+		expectedCount   int
+		expectedFilter  map[string]bool
+		expectedUser    string
+		expectErr       bool
+		expectedErrMsg  string
+	}{
+		{
+			name:           "filter with single event type",
+			args:           []string{"github-activity", "-f", "PushEvent", "testuser"},
+			expectedCount:  30,
+			expectedFilter: map[string]bool{"PushEvent": true},
+			expectedUser:   "testuser",
+			expectErr:      false,
+		},
+		{
+			name:           "filter with multiple event types",
+			args:           []string{"github-activity", "-filter", "PushEvent,WatchEvent", "testuser"},
+			expectedCount:  30,
+			expectedFilter: map[string]bool{"PushEvent": true, "WatchEvent": true},
+			expectedUser:   "testuser",
+			expectErr:      false,
+		},
+		{
+			name:           "filter with count flag",
+			args:           []string{"github-activity", "-count", "10", "-f", "PushEvent", "testuser"},
+			expectedCount:  10,
+			expectedFilter: map[string]bool{"PushEvent": true},
+			expectedUser:   "testuser",
+			expectErr:      false,
+		},
+		{
+			name:           "filter with short count flag",
+			args:           []string{"github-activity", "-n", "20", "-f", "IssuesEvent", "testuser"},
+			expectedCount:  20,
+			expectedFilter: map[string]bool{"IssuesEvent": true},
+			expectedUser:   "testuser",
+			expectErr:      false,
+		},
+		{
+			name:           "no filter returns empty map",
+			args:           []string{"github-activity", "testuser"},
+			expectedCount:  30,
+			expectedFilter: map[string]bool{},
+			expectedUser:   "testuser",
+			expectErr:      false,
+		},
+		{
+			name:           "invalid filter type",
+			args:           []string{"github-activity", "-f", "InvalidEvent", "testuser"},
+			expectedCount:  0,
+			expectedFilter: nil,
+			expectedUser:   "",
+			expectErr:      true,
+			expectedErrMsg: "invalid event type",
+		},
+		{
+			name:           "filter short flag -f with count",
+			args:           []string{"github-activity", "-f", "PushEvent", "-n", "5", "testuser"},
+			expectedCount:  5,
+			expectedFilter: map[string]bool{"PushEvent": true},
+			expectedUser:   "testuser",
+			expectErr:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withArgs(tt.args, func() {
+				count, filterMap, username, err := parseArgs()
+
+				if tt.expectErr {
+					if err == nil {
+						t.Errorf("Expected error, got nil")
+						return
+					}
+					if tt.expectedErrMsg != "" && !strings.Contains(err.Error(), tt.expectedErrMsg) {
+						t.Errorf("Expected error containing %q, got %v", tt.expectedErrMsg, err)
+					}
+					return
+				}
+
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+					return
+				}
+
+				if count != tt.expectedCount {
+					t.Errorf("Expected count %d, got %d", tt.expectedCount, count)
+				}
+
+				if username != tt.expectedUser {
+					t.Errorf("Expected username %q, got %q", tt.expectedUser, username)
+				}
+
+				// Compare filter maps
+				if len(filterMap) != len(tt.expectedFilter) {
+					t.Errorf("Expected filter map size %d, got %d", len(tt.expectedFilter), len(filterMap))
+					return
+				}
+				for key := range tt.expectedFilter {
+					if !filterMap[key] {
+						t.Errorf("Expected filter key %q", key)
+					}
+				}
+			})
+		})
+	}
+}
 
 // Helper to set up os.Args for testing parseArgs and reset flags
 func withArgs(args []string, fn func()) {
@@ -931,7 +1321,7 @@ func withArgs(args []string, fn func()) {
 
 func TestParseArgsNoUsername(t *testing.T) {
 	withArgs([]string{"github-activity"}, func() {
-		_, _, err := parseArgs()
+		_, _, _, err := parseArgs()
 		if err == nil {
 			t.Error("Expected error when no username provided")
 		}
@@ -943,7 +1333,7 @@ func TestParseArgsNoUsername(t *testing.T) {
 
 func TestParseArgsInvalidCount(t *testing.T) {
 	withArgs([]string{"github-activity", "-count", "0", "testuser"}, func() {
-		_, _, err := parseArgs()
+		_, _, _, err := parseArgs()
 		if err == nil {
 			t.Error("Expected error for count=0")
 		}
@@ -955,7 +1345,7 @@ func TestParseArgsInvalidCount(t *testing.T) {
 
 func TestParseArgsInvalidCountOver100(t *testing.T) {
 	withArgs([]string{"github-activity", "-count", "101", "testuser"}, func() {
-		_, _, err := parseArgs()
+		_, _, _, err := parseArgs()
 		if err == nil {
 			t.Error("Expected error for count=101")
 		}
@@ -967,7 +1357,7 @@ func TestParseArgsInvalidCountOver100(t *testing.T) {
 
 func TestParseArgsShortFlag(t *testing.T) {
 	withArgs([]string{"github-activity", "-n", "50", "testuser"}, func() {
-		count, username, err := parseArgs()
+		count, _, username, err := parseArgs()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
@@ -982,7 +1372,7 @@ func TestParseArgsShortFlag(t *testing.T) {
 
 func TestParseArgsDefaultCount(t *testing.T) {
 	withArgs([]string{"github-activity", "testuser"}, func() {
-		count, username, err := parseArgs()
+		count, _, username, err := parseArgs()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
@@ -998,7 +1388,7 @@ func TestParseArgsDefaultCount(t *testing.T) {
 func TestParseArgsBothFlagsNPrecedence(t *testing.T) {
 	// When both -count and -n are provided, -n should take precedence
 	withArgs([]string{"github-activity", "-count", "10", "-n", "20", "testuser"}, func() {
-		count, _, err := parseArgs()
+		count, _, _, err := parseArgs()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}
@@ -1011,7 +1401,7 @@ func TestParseArgsBothFlagsNPrecedence(t *testing.T) {
 
 func TestParseArgsCountFlag(t *testing.T) {
 	withArgs([]string{"github-activity", "-count", "75", "testuser"}, func() {
-		count, username, err := parseArgs()
+		count, _, username, err := parseArgs()
 		if err != nil {
 			t.Errorf("Unexpected error: %v", err)
 		}

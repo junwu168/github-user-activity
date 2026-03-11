@@ -243,3 +243,115 @@ func TestCLI_CountFlag_Default(t *testing.T) {
 		t.Errorf("Unexpected error: %s", output)
 	}
 }
+
+// ============== Filter by Event Type E2E Tests ==============
+
+func TestCLI_FilterFlag_ValidSingle(t *testing.T) {
+	buildBinary(t)
+	defer cleanupBinary()
+
+	// Valid single event type
+	cmd := exec.Command("./"+binaryName, "-f", "PushEvent", "testuser")
+	out, err := cmd.CombinedOutput()
+
+	output := string(out)
+	// Should either work or fail with user not found (network), not filter error
+	if strings.Contains(output, "invalid event type") {
+		t.Errorf("Expected valid filter, got error: %s", output)
+	}
+	_ = err // May fail with network/user not found
+}
+
+func TestCLI_FilterFlag_ValidMultiple(t *testing.T) {
+	buildBinary(t)
+	defer cleanupBinary()
+
+	// Valid multiple event types
+	cmd := exec.Command("./"+binaryName, "-filter", "PushEvent,WatchEvent", "testuser")
+	out, err := cmd.CombinedOutput()
+
+	output := string(out)
+	if strings.Contains(output, "invalid event type") {
+		t.Errorf("Expected valid filter, got error: %s", output)
+	}
+	_ = err
+}
+
+func TestCLI_FilterFlag_InvalidType(t *testing.T) {
+	buildBinary(t)
+	defer cleanupBinary()
+
+	// Invalid event type should fail with error
+	cmd := exec.Command("./"+binaryName, "-f", "InvalidEventType", "testuser")
+	out, err := cmd.CombinedOutput()
+
+	if err == nil {
+		t.Error("Expected error for invalid event type")
+	}
+	output := string(out)
+	if !strings.Contains(output, "invalid event type") {
+		t.Errorf("Expected invalid event type error, got: %s", output)
+	}
+}
+
+func TestCLI_FilterFlag_WithCount(t *testing.T) {
+	buildBinary(t)
+	defer cleanupBinary()
+
+	// Filter with count flag
+	cmd := exec.Command("./"+binaryName, "-count", "10", "-f", "PushEvent", "testuser")
+	out, err := cmd.CombinedOutput()
+
+	output := string(out)
+	if strings.Contains(output, "invalid event type") {
+		t.Errorf("Expected valid filter, got error: %s", output)
+	}
+	_ = err
+}
+
+func TestCLI_FilterFlag_ShortWithCount(t *testing.T) {
+	buildBinary(t)
+	defer cleanupBinary()
+
+	// Short filter with short count
+	cmd := exec.Command("./"+binaryName, "-n", "5", "-f", "IssuesEvent", "testuser")
+	out, err := cmd.CombinedOutput()
+
+	output := string(out)
+	if strings.Contains(output, "invalid event type") {
+		t.Errorf("Expected valid filter, got error: %s", output)
+	}
+	_ = err
+}
+
+func TestCLI_FilterFlag_MixedValidInvalid(t *testing.T) {
+	buildBinary(t)
+	defer cleanupBinary()
+
+	// Mixed valid and invalid should fail
+	cmd := exec.Command("./"+binaryName, "-f", "PushEvent,InvalidEvent", "testuser")
+	out, err := cmd.CombinedOutput()
+
+	if err == nil {
+		t.Error("Expected error for mixed valid/invalid event types")
+	}
+	output := string(out)
+	if !strings.Contains(output, "invalid event type") {
+		t.Errorf("Expected invalid event type error, got: %s", output)
+	}
+}
+
+func TestCLI_FilterFlag_SpacesInFilter(t *testing.T) {
+	buildBinary(t)
+	defer cleanupBinary()
+
+	// Filter with spaces around commas
+	cmd := exec.Command("./"+binaryName, "-f", "PushEvent, WatchEvent", "testuser")
+	out, err := cmd.CombinedOutput()
+
+	output := string(out)
+	if strings.Contains(output, "invalid event type") {
+		t.Errorf("Expected valid filter with spaces, got error: %s", output)
+	}
+	_ = err
+}

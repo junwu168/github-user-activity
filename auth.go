@@ -102,7 +102,10 @@ func fetchAuthenticatedEvents(urlStr, token string) ([]GitHubEvent, error) {
 	}
 
 	if resp.StatusCode == http.StatusForbidden {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read rate limit response: %v", err)
+		}
 		bodyStr := string(body)
 		if isRateLimitError(bodyStr) {
 			return nil, fmt.Errorf("GitHub API rate limit exceeded (403). Use a GITHUB_TOKEN for higher rate limits (5000/hour)")
@@ -115,7 +118,10 @@ func fetchAuthenticatedEvents(urlStr, token string) ([]GitHubEvent, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read error response: %v", err)
+		}
 		return nil, fmt.Errorf("GitHub API returned status %d: %s", resp.StatusCode, string(body))
 	}
 

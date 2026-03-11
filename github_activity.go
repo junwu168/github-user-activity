@@ -18,6 +18,13 @@ import (
 // Usernames: 1-39 chars, alphanumeric, hyphens, underscores, cannot start with -
 var validUsernameRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9_-]*[a-zA-Z0-9])?$|^[a-zA-Z0-9]$`)
 
+// validEventTypes is the list of supported GitHub event types for filtering
+var validEventTypes = []string{
+	"PushEvent", "IssuesEvent", "WatchEvent", "CreateEvent", "DeleteEvent",
+	"ForkEvent", "PullRequestEvent", "IssueCommentEvent", "CommitCommentEvent",
+	"PullRequestReviewEvent", "ReleaseEvent", "PullRequestReviewCommentEvent",
+}
+
 // GitHub API types
 type GitHubEvent struct {
 	Type      string  `json:"type"`
@@ -60,7 +67,7 @@ type PullRequest struct {
 
 func main() {
 	// Run the application with flags parsed from os.Args
-	count, username, err := parseArgs()
+	count, filterMap, username, err := parseArgs()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -70,6 +77,11 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Apply filter if specified
+	if len(filterMap) > 0 {
+		events = filterEvents(events, filterMap)
 	}
 
 	if len(events) == 0 {
@@ -82,13 +94,16 @@ func main() {
 	}
 }
 
-// parseArgs parses command line arguments and returns count and username
-func parseArgs() (int, string, error) {
+// parseArgs parses command line arguments and returns count, filter map, and username
+func parseArgs() (int, map[string]bool, string, error) {
 	// Define CLI flags using standard library flag package
 	countPtr := flag.Int("count", 30, "Number of events to fetch (1-100)")
 	countShortPtr := flag.Int("n", 30, "Number of events to fetch (1-100)")
+	filterPtr := flag.String("filter", "", "Filter events by type (comma-separated)")
+	filterShortPtr := flag.String("f", "", "Filter events by type (comma-separated)")
+
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: github-activity [-count | -n <number>] <username>\n")
+		fmt.Fprintf(os.Stderr, "Usage: github-activity [-count | -n <number>] [-filter | -f <event-types>] <username>\n")
 		fmt.Fprintln(os.Stderr, "\nOptions:")
 		flag.PrintDefaults()
 	}
@@ -98,7 +113,7 @@ func parseArgs() (int, string, error) {
 	// Get username from remaining arguments
 	args := flag.Args()
 	if len(args) < 1 {
-		return 0, "", fmt.Errorf("usage: github-activity [-count | -n <number>] <username>")
+		return 0, nil, "", fmt.Errorf("usage: github-activity [-count | -n <number>] [-filter | -f <event-types>] <username>")
 	}
 
 	username := args[0]
@@ -112,10 +127,23 @@ func parseArgs() (int, string, error) {
 
 	// Validate per_page parameter
 	if err := validatePerPage(perPage); err != nil {
-		return 0, "", err
+		return 0, nil, "", err
 	}
 
-	return perPage, username, nil
+	// Determine which filter flag takes precedence
+	// -f takes precedence if explicitly set
+	filterStr := *filterPtr
+	if *filterShortPtr != "" {
+		filterStr = *filterShortPtr
+	}
+
+	// Parse filter if provided
+	filterMap, err := parseFilter(filterStr)
+	if err != nil {
+		return 0, nil, "", err
+	}
+
+	return perPage, filterMap, username, nil
 }
 
 // HTTPClient interface for making HTTP requests (allows mocking)
@@ -287,4 +315,69 @@ func isValidUsername(username string) bool {
 		return false
 	}
 	return validUsernameRegex.MatchString(username)
+}
+
+// isValidEventType checks if the given event type is valid for filtering
+func isValidEventType(eventType string) bool {
+	if eventType == "" {
+		return false
+	}
+	for _, valid := range validEventTypes {
+		if eventType == valid {
+			return true
+		}
+	}
+	return false
+}
+
+// parseFilter parses a comma-separated string of event types into a map
+// Returns a map for O(1) lookup, or an error if any event type is invalid
+func parseFilter(filterStr string) (map[string]bool, error) {
+	// Empty string returns empty map (no filtering)
+	if filterStr == "" {
+		return make(map[string]bool), nil
+	}
+
+	// Split by comma and trim whitespace
+	types := strings.Split(filterStr, ",")
+	filterMap := make(map[string]bool)
+
+	for _, t := range types {
+		eventType := strings.TrimSpace(t)
+		if eventType == "" {
+			continue
+		}
+
+		// Validate each event type
+		if !isValidEventType(eventType) {
+			return nil, fmt.Errorf("invalid event type: %s", eventType)
+		}
+
+		filterMap[eventType] = true
+	}
+
+	return filterMap, nil
+}
+
+// filterEvents filters a slice of GitHub events based on the provided filter map
+// Returns a new slice (immutable - does not modify original)
+// If filterMap is empty or nil, all events are returned
+func filterEvents(events []GitHubEvent, filterMap map[string]bool) []GitHubEvent {
+	// If filter is empty or nil, return all events
+	if len(filterMap) == 0 {
+		// Return a copy to maintain immutability
+		result := make([]GitHubEvent, len(events))
+		copy(result, events)
+		return result
+	}
+
+	// Filter events based on the map
+	result := make([]GitHubEvent, 0)
+	for _, event := range events {
+		if filterMap[event.Type] {
+			result = append(result, event)
+		}
+	}
+
+	return result
 }

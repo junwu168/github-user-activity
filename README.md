@@ -47,7 +47,7 @@ Plus defense-in-depth with `url.PathEscape()` on the API URL.
 
 ## Testing
 
-82% test coverage with unit tests and CLI E2E tests:
+84% test coverage with unit tests and CLI E2E tests:
 
 ```bash
 $ go test -v ./...
@@ -84,7 +84,29 @@ go build -o github-activity .
 # Specify number of events (1-100, default 30)
 ./github-activity torvalds --count 50
 ./github-activity torvalds -n 25
+
+# Filter by event type (comma-separated, case-sensitive)
+./github-activity torvalds --filter PushEvent
+./github-activity torvalds -f PushEvent,WatchEvent
+./github-activity torvalds -f IssuesEvent,PullRequestEvent
 ```
+
+### Supported Event Types for Filtering
+
+| Event Type | Description |
+|------------|-------------|
+| PushEvent | Code pushes |
+| IssuesEvent | Issue opened/closed/reopened |
+| WatchEvent | Repository stars |
+| CreateEvent | Branches/tags created |
+| DeleteEvent | Branches/tags deleted |
+| ForkEvent | Repository forks |
+| PullRequestEvent | Pull requests |
+| IssueCommentEvent | Issue comments |
+| CommitCommentEvent | Commit comments |
+| PullRequestReviewEvent | PR reviews |
+| ReleaseEvent | Releases |
+| PullRequestReviewCommentEvent | PR review comments |
 
 ## Authentication (Optional)
 
@@ -103,8 +125,7 @@ If you hit the rate limit without a token, you'll see a helpful message explaini
 ## What's Next
 
 Potential improvements:
-- Filter by event type
 - Structured JSON output
 - Cache results
 
-The code is ~270 lines. Clean, focused, and done.
+The code is ~400 lines. Clean, focused, and done.
